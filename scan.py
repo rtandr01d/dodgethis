@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 
+from colorama import Fore, Back, Style
+import argparse
+import os
+import re
+import subprocess
 import argparse
 import os
 import re
@@ -7,6 +12,7 @@ from collections import defaultdict
 
 from elftools.elf.elffile import ELFFile
 
+from pyobjdump import dump, get_asm
 
 # Suspicious imported functions
 SUSPICIOUS_IMPORTS = {
@@ -131,36 +137,75 @@ def summarize(findings):
     return score, categories
 
 
-def scan_file(filename):
+def scan_file(filename, args):
+
+    if(args.verbose):
+      d = 1
+      asm = dump(args.path)
+    else:
+      d = 0
+
+def scan_file(filename, args):
+
+    if(args.verbose):
+      d = 1
+      asm = dump(filename)
+    else:
+      d = 0
+
     with open(filename, "rb") as f:
         data = f.read()
 
     with open(filename, "rb") as f:
         elf = ELFFile(f)
 
-        findings = []
-        findings.extend(scan_symbols(elf))
-        findings.extend(scan_strings(data))
+        symbol_findings = []
+        string_findings = []
+        symbol_findings.extend(scan_symbols(elf))
+        string_findings.extend(scan_strings(data))
 
-    score, cats = summarize(findings)
+    # Get imported symbols and weights
+    something, symbol_cats = summarize(symbol_findings)
+
+#score, cats = summarize(findings)
 
     print("=" * 70)
     print(filename)
     print("=" * 70)
 
-    print(f"Hardened Score: {score}\n")
-
-    if not cats:
+    if not symbol_cats:
         print("No obvious anti-hooking indicators found.")
         return
 
-    for cat in sorted(cats):
-        print(f"[+] {cat}")
+    print(Fore.RED + "Detected Symbols\n")
 
-        for item in sorted(set(cats[cat])):
-            print(f"      {item}")
+    for cat in sorted(symbol_cats):
+        print(Fore.GREEN + f"[+] {cat}")
+        for item in sorted(set(symbol_cats[cat])):
+            print(Fore.RED + f"\n[-] {item}\n")
 
+            # Get assembly line if dump is specified
+            if(d == 1):
+              print(Fore.WHITE + "Locations in target file:")
+              print("-" * 70)
+              get_asm(asm.splitlines(), item)
         print()
+
+    something, string_cats = summarize(string_findings)
+
+    print("Detected Strings")
+    print("PSA: Strings can be unreliable. Do your homework on these findings.\n")
+
+    for cat in sorted(string_cats):
+        print(f"[+] {cat}")
+        for item in sorted(set(string_cats[cat])):
+            print(f"      {item}")
+        print()
+
+
+    if not symbol_cats and not string_cats:
+        print("No obvious anti-hooking indicators found.")
+        return
 
 
 def main():
@@ -171,6 +216,13 @@ def main():
         help=".so file or directory",
     )
 
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        help="Analyzes an objdump of the target",
+        action="store_true"
+    )
+
     args = parser.parse_args()
 
     if os.path.isdir(args.path):
@@ -179,7 +231,8 @@ def main():
                 if f.endswith(".so"):
                     scan_file(os.path.join(root, f))
     else:
-        scan_file(args.path)
+        scan_file(args.path, args)
+#scan_file(args.path)
 
 
 if __name__ == "__main__":
